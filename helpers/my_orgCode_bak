@@ -1,0 +1,1276 @@
+//ORIGINAL CODE
+//
+//users.js
+//use strict";
+//
+///** Routes for users. */
+//
+//const jsonschema = require("jsonschema");
+//
+//const express = require("express");
+//const { ensureLoggedIn, ensureAdmin, ensureCorrectUserOrAdmin } = require("../middleware/auth");
+//const { BadRequestError } = require("../expressError");
+//const User = require("../models/user");
+//const { createToken } = require("../helpers/tokens");
+//const userNewSchema = require("../schemas/userNew.json");
+//const userUpdateSchema = require("../schemas/userUpdate.json");
+//
+//const router = express.Router();
+//
+//router.post("/:username/jobs/:id", async function (req, res, next) {
+//  try {
+//    const { username } = req.params;
+//    const jobId = req.params.id;
+//
+//    const appliedJobId = await User.applyForJobs(username, jobId);
+//    return res.json({ applied: appliedJobId });
+//  } catch (err) {
+//    return next (err);
+//  }
+//  });
+//
+//  //router.post("/create", ensureLoggedIn, async function (req, res, next) {
+//  //  try {
+//  //    //const requestingUsername = req.user.username;
+//  //    if (!req.user.isAdmin) {
+//  //      throw new UnauthorizedError("Only admins can create new users.");
+//  //    }
+//  //
+//  //    const newUser = await User.create(req.body);
+//  //    return res.status(201).json({ newUser });
+//  //  } catch (err) {
+//  //    return next(err);
+//  //  }
+//  //});
+//
+///** POST / { user }  => { user, token }
+// *
+// * Adds a new user. This is not the registration endpoint --- instead, this is
+// * only for admin users to add new users. The new user being added can be an
+// * admin.
+// *
+// * This returns the newly created user and an authentication token for them:
+// *  {user: { username, firstName, lastName, email, isAdmin }, token }
+// *
+// * Authorization required: login
+// **/
+//
+//router.post("/register", ensureLoggedIn, async function (req, res, next) {
+//  try {
+//    const validator = jsonschema.validate(req.body, userNewSchema);
+//    if (!validator.valid) {
+//      const errs = validator.errors.map(e => e.stack);
+//      throw new BadRequestError(errs);
+//    }
+//
+//    const newUser = await User.register(req.body);
+//    const token = createToken(newUser);
+//    return res.status(201).json({ newUser, token });
+//  } catch (err) {
+//    return next(err);
+//  }
+//});
+//
+//
+///** GET / => { users: [ {username, firstName, lastName, email }, ... ] } Returns list of all users. 
+// * Authorization required: login*/
+//
+////had to modify to pass the user to findAll and check if is_admin
+//router.get("/", ensureLoggedIn, async function (req, res, next) {
+//  try {
+//    const requestingUsername = req.user.username;
+//  
+//    const users = await User.findAll(requestingUsername);
+//    return res.json({ users });
+//  } catch (err) {
+//    return next(err);
+//  }
+//});
+//
+//
+///** GET /[username] => { user }
+// *
+// * Returns { username, firstName, lastName, isAdmin }
+// *
+// * Authorization required: login
+// **/
+//
+//router.get("/:username", ensureLoggedIn, async function (req, res, next) {
+//  try {
+//    //had to modify the below to add the two username variables...
+//    //ORG: const user = await User.get(req.params.username);
+//    const user = await User.get(usernameRequested, usernameRequesting);
+//    return res.json({ user });
+//  } catch (err) {
+//    return next(err);
+//  }
+//});
+//
+//
+///** PATCH /[username] { user } => { user }
+// *
+// * Data can include:
+// *   { firstName, lastName, password, email }
+// *
+// * Returns { username, firstName, lastName, email, isAdmin }
+// *
+// * Authorization required: login
+// **/
+//
+//router.patch("/:username", ensureLoggedIn, async function (req, res, next) {
+//  try {
+//    const validator = jsonschema.validate(req.body, userUpdateSchema);
+//    if (!validator.valid) {
+//      const errs = validator.errors.map(e => e.stack);
+//      throw new BadRequestError(errs);
+//    }
+//    //had to add the username being updated here because of the User.update change:
+//    const requestingUsername = res.locals.user.username;
+//
+//    const user = await User.update(targetUsername, req.params.username, req.body);
+//    return res.json({ user });
+//  } catch (err) {
+//    return next(err);
+//  }
+//});
+//
+//
+///** DELETE /[username]  =>  { deleted: username }
+// *
+// * Authorization required: login
+// **/
+//
+//router.delete("/:username", ensureLoggedIn, async function (req, res, next) {
+//  try {
+//    //added the user to be deleted from User.remove
+//    await User.remove(targetUsername, req.params.username);
+//    return res.json({ deleted: req.params.username });
+//  } catch (err) {
+//    return next(err);
+//  }
+//});
+//
+//
+//module.exports = router;
+//
+////oldrouter.post("/create", ensureLoggedIn, async function (req, res, next) {
+////    try {
+////      if (!req.user || !req.user.username) {
+////        throw new UnauthorizedError("You must be logged in to perform this action.");
+////      }
+////      const requestingUsername = req.user.username;
+////      const validator = jsonschema.validate(req.body, userNewSchema);  // Assuming userNewSchema is for admin user creation
+////      if (!validator.valid) {
+////        const errs = validator.errors.map(e => e.stack);
+////        throw new BadRequestError(errs);
+////      }
+////      const user = await User.createAdminUser(req.body, requestingUsername);
+////      return res.status(201).json({ user });
+////    } catch (err) {
+////      return next(err);
+////    }
+////  });
+//
+//AUTH.JS
+//"use strict";
+//
+///** Convenience middleware to handle common auth cases in routes. */
+//
+//const jwt = require("jsonwebtoken");
+//const { SECRET_KEY } = require("../config");
+//const { UnauthorizedError } = require("../expressError");
+//
+//
+///** Middleware: Authenticate user. If a token was provided, verify it, and, if valid, 
+// * store the token payload on res.locals (this will include the username and isAdmin field.) 
+// * It's not an error if no token was provided or if the token is not valid.*/
+//
+//function authenticateJWT(req, res, next) {
+//  try {
+//    const authHeader = req.headers && req.headers.authorization;
+//    if (authHeader) {
+//      const token = authHeader.replace(/^[Bb]earer /, "").trim();
+//      res.locals.user = jwt.verify(token, SECRET_KEY);
+//    }
+//    return next();
+//  } catch (err) {
+//    return next();
+//  }
+//}
+//
+///** Middleware to use when they must be logged in.If not, raises Unauthorized.*/
+//
+//function ensureLoggedIn(req, res, next) {
+//  try {
+//    if (!res.locals.user) throw new UnauthorizedError();
+//    
+//    return next();
+//  } catch (err) {
+//    return next(err);
+//  }
+//}
+//
+//
+//module.exports = {
+//  authenticateJWT,
+//  ensureLoggedIn,
+//
+//};
+//
+//USER.JS MODEL
+//"use strict";
+//
+//const db = require("../db");
+//const bcrypt = require("bcrypt");
+//const { sqlForPartialUpdate } = require("../helpers/sql");
+//const {
+//  NotFoundError,
+//  BadRequestError,
+//  UnauthorizedError,
+//} = require("../expressError");
+//
+//const { BCRYPT_WORK_FACTOR } = require("../config.js");
+//const { password } = require("pg/lib/defaults.js");
+//
+///** Related functions for users. */
+//
+//class User {
+//  /** authenticate user with username, password. Returns { username, first_name, last_name, email, is_admin } Throws UnauthorizedError 
+//   * is user not found or wrong password.
+//   **/
+//
+//  static async authenticate(username, password) {
+//    const result = await db.query(
+//          `SELECT username,
+//                  password,
+//                  first_name AS "firstName",
+//                  last_name AS "lastName",
+//                  email,
+//                  is_admin AS "isAdmin"
+//           FROM users
+//           WHERE username = $1`,
+//        [username],
+//    );
+//
+//    const user = result.rows[0];
+//
+//    if (user) {
+//      const isValid = await bcrypt.compare(password, user.password);
+//      if (isValid === true) {
+//        delete user.password;
+//        return user;
+//      }
+//    }
+//
+//    throw new UnauthorizedError("Invalid username/password");
+//  }
+//
+//  /** Register user with data. Returns { username, firstName, lastName, email, isAdmin } Throws BadRequestError on duplicates.
+//   **/
+//static async create (
+//  { username, password, firstName, lastName, email },
+//  requestingUsername) {
+//
+//    const adminCheck = await db.query(
+//      `SELECT is_admin FROM users WHERE username = $1`, 
+//      [requestingUsername]
+//    );
+//
+//   const adminUser = adminCheck.rows[0];
+//   if(!adminUser || !adminUser.is_admin) {
+//    throw new UnauthorizedError(`${requestingUsername} is not authorized to create users`);
+//  }
+//  const hashedPassword = await bcrypt.hash(password, BCRYPT_WORK_FACTOR);
+//  const result = await db.query(
+//    `INSERT INTO users (username, password, first_name, last_name, email)
+//     VALUES ($1, $2, $3, $4, $5) 
+//     RETURNING username, first_name AS "firstName", last_name AS "lastName", email"`,
+//    [username, hashedPassword, firstName, lastName, email]
+//  );
+//  return result.rows[0];
+//}
+//  
+//  static async register(
+//      { username, password, firstName, lastName, email }) {
+//        
+//        const duplicateCheck = await db.query(
+//          `SELECT username
+//           FROM users
+//           WHERE username = $1`,
+//        [username],
+//    );
+//        if (duplicateCheck.rows[0]) {
+//          throw new BadRequestError(`Duplicate username: ${username}`);
+//    }
+//      //register doesn't need admin just create?  what the hell is registration doing then lol
+//       // const userResult = await db.query(
+//       //   `SELECT is_admin 
+//       //   FROM users 
+//       //   WHERE username = $1`, 
+//       //   [requestingUsername]
+//       // );
+//        //removed...not sure if schema takes care of this...
+//        //if (!username) {
+//        //  throw new UnauthorizedError("Username is required to check permissions");
+//        //}
+//        //const adminUser = userResult.rows[0];
+//        //if (!adminUser || !adminUser.is_admin) {
+//        //  throw new UnauthorizedError(`${requestingUsername} is not authorized to view all users`);
+//        //}
+// 
+//    const hashedPassword = await bcrypt.hash(password, BCRYPT_WORK_FACTOR);
+//
+//    const result = await db.query(
+//      `INSERT INTO users (username, password, first_name, last_name, email)
+//       VALUES ($1, $2, $3, $4, $5)  
+//       RETURNING username, first_name AS "firstName", last_name AS "lastName", email`,
+//      [username, hashedPassword, firstName, lastName, email]
+//    );
+//    return result.rows[0];
+//  }
+//
+//  /** Find all users.
+//Returns [{ username, first_name, last_name, email, is_admin }, ...]**/
+//
+//
+//  static async findAll(requestingUsername) {
+//
+//    const userResult = await db.query(
+//      `SELECT is_admin 
+//      FROM users 
+//      WHERE username = $1`, 
+//      [requestingUsername]
+//    );
+//    if (!username) {
+//      throw new UnauthorizedError("Username is required to check permissions");
+//  }
+//    const adminUser = userResult.rows[0];
+//    if (!adminUser || !adminUser.is_admin) {
+//      throw new UnauthorizedError(`${requestingUsername} is not authorized to view all users`);
+//    }
+//
+//    const result = await db.query(
+//          `SELECT u.username,
+//                  u.first_name AS "firstName",
+//                  u.last_name AS "lastName",
+//                  u.email,
+//                  u.is_admin AS "isAdmin",
+//                  array_agg(a.job_id) AS "applications"
+//           FROM users u
+//           LEFT JOIN applications a ON u.username = a.username
+//           GROUP BY u.username
+//           ORDER BY u.username
+//           `
+//    );
+//
+//    return result.rows;
+//  }
+//
+//  /** Given a username, return data about user. Returns { username, first_name, last_name, is_admin, jobs }   
+//   * where jobs is { id, title, company_handle, company_name, state } Throws NotFoundError if user not found.
+//   **/
+//
+////ONLY ADMIN OR THAT USER NEEDS AUTH BELOW:
+////==========================================================================
+//  static async get(usernameRequesting, usernameRequested) {
+//
+//    const userResult = await db.query(
+//      `SELECT is_admin 
+//      FROM users 
+//      WHERE username = $1`, 
+//      [usernameRequesting]
+//    );
+//    const userRequesting = userResult.rows[0];
+//
+//    if (!userRequesting|| (!userRequesting.is_admin && userRequesting !== usernameRequested)) {
+//      throw new UnauthorizedError(`${usernameRequesting} is not authorized`);
+//    }
+//
+//    const userRes = await db.query(
+//          `SELECT username,
+//                  first_name AS "firstName",
+//                  last_name AS "lastName",
+//                  email,
+//                  is_admin AS "isAdmin"
+//           FROM users
+//           WHERE username = $1`,
+//        [usernameRequested],
+//    );
+//
+//    const user = userRes.rows[0];
+//
+//    if (!user) throw new NotFoundError(`No user: ${usernameRequested}`);
+//
+//    return user;
+//  }
+//
+//  /** Update user data with `data`.This is a "partial update" --- it's fine if data doesn't containall the fields; this only 
+//   * changes provided ones.Data can include:  { firstName, lastName, password, email, isAdmin }Returns { username, firstName, lastName, 
+//   * email, isAdmin }Throws NotFoundError if not found.
+//   *
+//   * WARNING: this function can set a new password or make a user an admin.
+//   * Callers of this function must be certain they have validated inputs to this
+//   * or a serious security risks are opened.
+//   */
+//  static async update(requestingUsername, targetUsername, data) {
+//    
+//    const userResult = await db.query(
+//      `SELECT is_admin FROM users WHERE username =$1`,
+//      [requestingUsername]
+//    );
+//    
+//    const requestingUser = userResult.rows[0];
+//    if(!requestingUser || (!requestingUser.is_admin && requestingUsername !== targetUsername)) {
+//      throw new UnauthorizedError(`${requestingUsername} is not authorized`);
+//    }
+//  
+//    if (data.password) {
+//      data.password = await bcrypt.hash(data.password, BCRYPT_WORK_FACTOR);
+//    }
+//
+//    const { setCols, values } = sqlForPartialUpdate(
+//        data,
+//        {
+//          firstName: "first_name",
+//          lastName: "last_name",
+//          isAdmin: "is_admin",
+//        });
+//    const usernameVarIdx = "$" + (values.length + 1);
+//
+//    const querySql = `UPDATE users 
+//                      SET ${setCols} 
+//                      WHERE username = ${usernameVarIdx} 
+//                      RETURNING username,
+//                                first_name AS "firstName",
+//                                last_name AS "lastName",
+//                                email,
+//                                is_admin AS "isAdmin"`;
+//    const result = await db.query(querySql, [...values, username]);
+//    const user = result.rows[0];
+//
+//    if (!user) throw new NotFoundError(`No user: ${username}`);
+//
+//    delete user.password;
+//    return user;
+//  }
+//
+//  /** Delete given user from database; returns undefined. */
+//  static async remove(requestingUsername, targetUsername) {
+//    const userResult = await db.query(
+//      `SELECT is_admin FROM users WHERE username =$1`,
+//      [requestingUsername]
+//    );
+//    
+//    const requestingUser = userResult.rows[0];
+//    if(!requestingUser || (!requestingUser.is_admin && requestingUsername !== targetUsername)) {
+//      throw new UnauthorizedError(`${requestingUsername} is not authorized`);
+//    }
+//    let result = await db.query(
+//          `DELETE
+//           FROM users
+//           WHERE username = $1
+//           RETURNING username`,
+//        [targetUsername],
+//    );
+//    const user = result.rows[0];
+//
+//    if (!user) throw new NotFoundError(`No user: ${targetUsername}`);
+//  }
+//
+//  //APPLY FOR JOB NO AUTH YET
+//  static async applyForJobs(username, jobId)  {
+//    const result = await db.query(
+//      `INSERT INTO applications (username, job_id)
+//      VALUES ($1, $2)
+//      RETURNING job_id`,
+//      [username, jobId]
+//    );
+//    return result.rows[0].job_id;
+//  }
+//}
+//
+//
+//module.exports = User;
+//
+//
+//COMPANY.JS MODEL:
+//"use strict";
+//
+//const { max } = require("pg/lib/defaults");
+//const db = require("../db");
+//const { BadRequestError, NotFoundError, UnauthorizedError  } = require("../expressError");
+//const { sqlForPartialUpdate } = require("../helpers/sql");
+//
+//
+///** Related functions for companies. */
+//
+//class Company {
+//  /** Create a company (from data), update db, return new company data. data should be { handle, name, description, numEmployees, logoUrl } 
+//   * Returns { handle, name, description, numEmployees, logoUrl } Throws BadRequestError if company already in database.
+//   * */
+//
+//  static async create({ handle, name, numEmployees, description, logoUrl }) {
+//   //REMOVING THIS PASSED SUPERTEST WTF
+//    // const adminCheck = await db.query(
+//   //   `SELECT is_admin FROM users WHERE username = $1`, 
+//   //   [requestingUsername]
+//   // );
+//  //
+//   // const adminUser = adminCheck.rows[0];
+//   // if (!adminUser || !adminUser.is_admin) {
+//   //   throw new UnauthorizedError(`${requestingUsername} is not authorized to create a company`);
+//   // }
+//  
+//    const duplicateCheck = await db.query(
+//      `SELECT handle FROM companies WHERE handle = $1`,
+//      [handle]
+//    );
+//  
+//    if (duplicateCheck.rows[0]) {
+//      throw new NotFoundError(`Duplicate company: ${handle}`);
+//    }
+//  
+//    const result = await db.query(
+//      `INSERT INTO companies
+//       (handle, name, num_employees, description, logo_url)
+//       VALUES ($1, $2, $3, $4, $5)
+//       RETURNING handle, name, num_employees AS "numEmployees", description, logo_url AS "logoUrl"`,
+//      [
+//        handle,
+//        name,
+//        numEmployees, // This value will be inserted into the 'num_employees' column
+//        description,
+//        logoUrl,
+//      ],
+//    );
+//    const company = result.rows[0];
+//  
+//    return company;
+//  }
+//  
+//
+//  /** Find all companies.
+//   *
+//   * Returns [{ handle, name, description, numEmployees, logoUrl }, ...]
+//   * */
+////NO AUTH REQUIRED
+//static async findAll({ name, minEmployees, maxEmployees }) {
+//  let query = `
+//    SELECT handle,
+//           name,
+//           description,
+//           num_employees AS "numEmployees",
+//           logo_url AS "logoUrl"
+//    FROM companies
+//  `;
+//  let whereExpressions = [];
+//  let queryValues = [];
+//
+//
+//  if (name) {
+//    queryValues.push(`%${name}%`);
+//    whereExpressions.push(`name ILIKE $${queryValues.length}`);
+//  }
+//
+//if (minEmployees) {
+//  queryValues.push(minEmployees);
+//  whereExpressions.push(`num_employees >= $${queryValues.length}`);
+//}
+//if(maxEmployees) {
+//  queryValues.push(maxEmployees);
+//  whereExpressions.push(`num_employees <= $${queryValues.length}`);
+//}
+//if (whereExpressions.length > 0) {
+//  query += " WHERE " + whereExpressions.join(" AND ");
+//}
+//
+//query += " ORDER BY name";
+//
+//const companiesRes = await db.query(query, queryValues);
+//return companiesRes.rows;
+//}
+//  /** Given a company handle, return data about company.
+//   *
+//   * Returns { handle, name, description, numEmployees, logoUrl, jobs }
+//   *   where jobs is [{ id, title, salary, equity, companyHandle }, ...]
+//   *
+//   * Throws NotFoundError if not found.
+//   **/
+//
+//  static async get(handle) {
+//    const companyRes = await db.query(
+//          `SELECT handle,
+//                  name,
+//                  num_employees AS "numEmployees",
+//                  description,
+//                  
+//                  logo_url AS "logoUrl"
+//           FROM companies
+//           WHERE handle = $1`,
+//        [handle]);
+//
+//    const company = companyRes.rows[0];
+//
+//    if (!company) throw new NotFoundError(`No company: ${handle}`);
+//
+//    const jobRes = await db.query(
+//      `SELECT id,
+//      title,
+//      salary,
+//      equity,
+//      company_handle
+//      FROM jobs
+//      WHERE company_handle = $1`,
+//      [handle]
+//    );
+//    company.jobs = jobRes.rows;
+//
+//    return company;
+//  }
+//
+///** Update company data with `data`. This is a "partial update" --- it's fine if data doesn't contain all the fields; this only changes provided ones.
+//   *  Data can include: {name, description, numEmployees, logoUrl} Returns {handle, name, description, numEmployees, logoUrl} 
+//   * Throws NotFoundError if not found. */
+//
+//  static async update(handle, data, requestingUsername) {
+//
+//    const userResult = await db.query(
+//      `SELECT
+//      is_admin
+//      FROM users
+//      WHERE username = $1`, [requestingUsername]
+//);
+//
+//const adminUser = userResult.rows[0];
+//if (!adminUser || !adminUser.is_admin) {
+//  throw new UnauthorizedError(`${requestingUsername}is not authorized to update companies`);
+//}
+//
+//const { setCols, values } = sqlForPartialUpdate(
+//        data,
+//        {
+//          handle: "handle",
+//          name: "name",
+//          numEmployees: "num_employees",
+//          logoUrl: "logo_url",
+//        });
+//
+//    const querySql = `UPDATE companies 
+//    SET ${setCols} 
+//    WHERE handle = $${values.length + 1} 
+//    RETURNING handle, 
+//              name, 
+//              description, 
+//              num_employees AS "numEmployees", 
+//              logo_url AS "logoUrl"`;
+//const result = await db.query(querySql, [...values, handle]);
+//
+//    const company = result.rows[0];
+//
+//    if (!company) {
+//    throw new NotFoundError(`No company: ${handle}`);
+//      }
+//    return company;
+//  }
+//
+//  /** Delete given company from database; returns undefined.
+//   Throws NotFoundError if company not found. **/
+//
+//  static async remove(handle, requestingUsername) {
+//  
+//    const adminCheck = await db.query(
+//          `SELECT
+//          is_admin
+//          FROM users
+//          WHERE username = $1`, [requestingUsername]
+//    );
+// 
+//    const adminUser = adminCheck.rows[0];
+//    if (!adminUser || !adminUser.is_admin) {
+//      throw new UnauthorizedError(`${requestingUsername} cannot remove companies`);
+//  }
+//  const compResult = await db.query(
+//       `DELETE
+//       FROM companies
+//       WHERE handle = $1
+//      RETURNING handle`,
+//      [handle]
+//      );
+//      const compToDelete = compResult.rows[0];
+//
+//    if (!compToDelete){
+//      throw new NotFoundError(`No company handle: ${handle}`);
+//  }
+//}
+//}
+//
+//module.exports = Company;
+//
+//
+////ORG findAll
+////  static async findAll() {
+////    const companiesRes = await db.query(
+////          `SELECT handle,
+////                  name,
+////                  description,
+////                  num_employees AS "numEmployees",
+////                  logo_url AS "logoUrl"
+////           FROM companies
+////           ORDER BY name`);
+////    return companiesRes.rows;
+////  }
+//
+//ROUTES COMPANIES.JS
+//
+//"use strict";
+//
+///** Routes for companies. */
+//
+//const jsonschema = require("jsonschema");
+//const express = require("express");
+//const { UnauthorizedError, BadRequestError} = require('../expressError');
+//const { ensureLoggedIn } = require("../middleware/auth");
+//const Company = require("../models/company");
+//
+//const companyNewSchema = require("../schemas/companyNew.json");
+//const companyUpdateSchema = require("../schemas/companyUpdate.json");
+//
+//const router = new express.Router();
+//
+//
+///** POST / { company } =>  { company } company should be { handle, name, description, numEmployees, logoUrl } 
+// * Returns { handle, name, description, numEmployees, logoUrl } Authorization required: login*/
+//
+//router.post("/", ensureLoggedIn, async function (req, res, next) {
+//  try {
+//    const validator = jsonschema.validate(req.body, companyNewSchema);
+//    if (!validator.valid) {
+//      const errs = validator.errors.map(e => e.stack);
+//      throw new BadRequestError(errs);
+//    }
+//    const company = await Company.create(req.body, requestingUsername);
+//   
+//    return res.status(201).json({ company });
+//  } catch (err) {
+//    return next(err);
+//  }
+//});
+//
+///** GET /  =>   { companies: [ { handle, name, description, numEmployees, logoUrl }, ...] } Can filter on provided search filters:
+// *  - minEmployees - maxEmployees - nameLike (will find case-insensitive, partial matches) Authorization required: none*/
+//
+//router.get("/", async function (req, res, next) {
+//  try {
+//    const companies = await Company.findAll(req.query);
+//    return res.json({ companies });
+//  } catch (err) {
+//    return next(err);
+//  }
+//});
+//
+///** GET /[handle]  =>  { company   Company is { handle, name, description, 
+// * numEmployees, logoUrl, jobs    where jobs is [{ id, title, salary, equity }, ... Authorization required: none*/
+//
+//router.get("/:handle", async function (req, res, next) {
+//  try {
+//    const company = await Company.get(req.params.handle);
+//    return res.json({ company });
+//  } catch (err) {
+//    return next(err);
+//  }
+//});
+//
+///** PATCH /[handle] { fld1, fld2, ... } => { company  Patches company data fields can be: 
+// * { name, description, numEmployees, logo_url  Returns { handle, name, description, numEmployees, logo_url  
+// * Authorization required: login*/
+//
+//router.patch("/:handle", ensureLoggedIn, async function (req, res, next) {
+//  try {
+//    //const username = res.locals.user.username;
+//    const validator = jsonschema.validate(req.body, companyUpdateSchema);
+//    if (!validator.valid) {
+//      const errs = validator.errors.map(e => e.stack);
+//      throw new BadRequestError(errs);
+//    }
+//    //modified the route here adding username const and to update...
+//   
+//   // if (!username) {
+//   //   throw new UnauthorizedError("Username is required for this operation");
+//   // }
+//
+//   const company = await Company.update(req.params.handle, req.body); //res.locals.user.username????
+//    return res.json({ company });
+//  } catch (err) {
+//    return next(err);
+//  }
+//});
+//
+///** DELETE /[handle]  =>  { deleted: handle } Authorization: login*/
+//
+//router.delete("/:handle", ensureLoggedIn, async function (req, res, next) {
+//  try {
+//    const requestingUser = res.locals.user.username;
+//    if(!requestingUser) {
+//      throw new UnauthorizedError("username is required for this operation");
+//    }
+//
+//    await Company.remove(req.params.handle, res.locals.user.username);
+//    return res.json({ msg: "company deleted" });   //deleted: req.params.handle
+//  } catch (err) {
+//    return next(err);
+//  }
+//});
+//
+//
+//module.exports = router;
+//
+//
+//MODEL JOB.JS
+//
+//"use strict";
+//
+//const db = require("../db");
+//const bcrypt = require("bcrypt");
+//const { sqlForPartialUpdate } = require("../helpers/sql");
+//const {
+//  NotFoundError,
+//  BadRequestError,
+//  UnauthorizedError,
+//} = require("../expressError");
+////not needed?const { BCRYPT_WORK_FACTOR } = require("../config.js");
+//
+//
+//class Job {
+//static async findAll({ title, salaryMax, equity}) {
+//  let query = `
+//    SELECT id,
+//           title,
+//           salary,
+//           equity,
+//           company_handle
+//        
+//    FROM jobs
+//  `;
+//  let queryValues = [];
+//  let whereExpressions = [];
+//
+//  // For name filter
+//  if (title) {
+//    queryValues.push(`%${title}%`);
+//    whereExpressions.push(`title ILIKE $${queryValues.length}`);
+//  }
+//
+//if (salaryMax) {
+//  queryValues.push(salaryMax);
+//  whereExpressions.push(`salary <= $${queryValues.length}`);
+//}
+//if(equity) {
+//  //queryValues.push(equity);
+//  whereExpressions.push(`equity > 0`);      //`equity = $${queryValues.length}`);  removed these two for the >
+//}
+////removed as it's not asked for in the exer
+////if(company_handle) {
+////    queryValues.push(company_handle);
+////    whereExpressions.push(`company_handle ILIKE $${queryValues.length}`);  //or company_handle = ?
+////  }
+//if (whereExpressions.length > 0) {
+//  query += " WHERE " + whereExpressions.join(" AND ");
+//}
+//
+//query += " ORDER BY title";
+//
+//const jobRes = await db.query(query, queryValues);
+//return jobRes.rows;
+//}
+//
+//////find all jobs without filtering:
+////static async findAll() {
+////
+////    //is_admin check?
+////    const userResult = await db.query(
+////      `SELECT is_admin 
+////      FROM users 
+////      WHERE username = $1`, 
+////      [username]
+////    );
+////    const adminUser = userResult.rows[0];
+////    if (!adminUser || !adminUser.is_admin) {
+////      throw new UnauthorizedError(`${username} is not authorized to view all jobs`);
+////    }
+////
+////    const result = await db.query(
+////          `SELECT id,
+////                  title AS "title,
+////                  salary AS "salary",
+////                  equity AS "equity",
+////                  company_handle,
+////                 
+////           FROM jobs
+////           ORDER BY id`
+////    );
+////
+////    return result.rows;
+////  }
+//
+////GET JOB HANDLE WITH is_admin
+//static async get(usernameRequesting, id) {
+//
+//    const userResult = await db.query(
+//      `SELECT is_admin 
+//      FROM users 
+//      WHERE username = $1`, 
+//      [usernameRequesting]
+//    );
+//    const userRequesting = userResult.rows[0];
+//
+//    if (!userRequesting || !userRequesting.is_admin) {
+//      throw new UnauthorizedError(`${userRequesting} is not authorized`);
+//    }
+//
+//    const jobRes = await db.query(
+//        `SELECT id,
+//            title AS "title,
+//            salary AS "salary",
+//            equity AS "equity",
+//            company_handle,
+//        FROM jobs
+//        ORDER BY id`,
+//        [id]
+//    );
+//
+//    const job = jobRes.rows[0];
+//
+//    if (!job) throw new NotFoundError(`No job: ${id}`);
+//
+//    return job;
+//  }
+//
+//
+//  //keeping register and using for add job
+//  static async register(
+//    { usernameRequesting, title, salary, equity, company_handle }) {
+//
+//        const userResult = await db.query(
+//            `SELECT is_admin 
+//            FROM users 
+//            WHERE username = $1`, 
+//            [usernameRequesting]
+//          );
+//          const userUpdate = userResult.rows[0];
+//
+//          if (!userUpdate || !userUpdate.is_admin) {
+//            throw new UnauthorizedError(`${usernameRequesting} is not authorized`);
+//          }
+//
+//          //ADD MORE QUERY VALUES???  JEFFEDIT
+//  const duplicateCheck = await db.query(
+//        `SELECT title
+//         FROM jobs
+//         WHERE title = $1`,
+//      [title],
+//  );
+//
+//  if (duplicateCheck.rows[0]) {
+//    throw new BadRequestError(`Duplicate job title: ${title}`);
+//  }
+//
+//  const result = await db.query(
+//        `INSERT INTO jobs
+//         (
+//          title,
+//          salary,
+//          equity,
+//          company_handle
+//          )
+//         VALUES ($1, $2, $3, $4)
+//         RETURNING title, salary AS "salary", equity AS "equity", company_handle AS "company_handle"`,
+//      [
+//       title,
+//       salary,
+//       equity,
+//       company_handle,
+//      ],
+//  );
+//
+//  const job = result.rows[0];
+//
+//  return job;
+//}
+//
+////edit a job
+//  static async update(requestingUsername, id, data) {
+//    
+//    const userResult = await db.query(
+//      `SELECT is_admin FROM users WHERE username =$1`,
+//      [requestingUsername]
+//    );
+//    
+//    const requestingUser = userResult.rows[0];
+//    if(!requestingUser || !requestingUser.is_admin) {
+//      throw new UnauthorizedError(`${requestingUsername} is not authorized`);
+//    }
+//
+//    const { setCols, values } = sqlForPartialUpdate(
+//        data,
+//        {
+//            title: "title",
+//            salary: "salary",
+//            equity: "equity",
+//            company_handle: "company_handle"
+//        });
+//        const idVarIdx = "$" + (values.length + 1);
+//
+//        const querySql = `UPDATE jobs 
+//                          SET ${setCols} 
+//                          WHERE id = ${idVarIdx} 
+//                          RETURNING id, title, salary, equity, company_handle`;
+//        
+//        const result = await db.query(querySql, [...values, id]);
+//        const job = result.rows[0];
+//        
+//        if (!job) throw new NotFoundError(`No job with: ${id}`);
+//
+//    return job;
+//  }
+//
+//  //delete a job
+//  static async remove(requestingUsername, id) {
+//    const userResult = await db.query(
+//      `SELECT is_admin FROM users WHERE username =$1`,
+//      [requestingUsername]
+//    );
+//    
+//    const requestingUser = userResult.rows[0];
+//    if(!requestingUser || !requestingUser.is_admin) {
+//      throw new UnauthorizedError(`${requestingUser} is not authorized`);
+//    }
+//    let result = await db.query(
+//          `DELETE
+//           FROM jobs
+//           WHERE id = $1
+//           RETURNING id`,
+//        [id],
+//    );
+//    const job = result.rows[0];
+//
+//    if (!id) throw new NotFoundError(`No job id: ${id}`);
+//  }
+//}
+//
+//
+//  module.exports = Job;
+//
+//
+//  ROUTES JOBS.JS
+//  "use strict";
+//
+///** Routes for jobs. */
+//
+//const jsonschema = require("jsonschema");
+//const express = require("express");
+//const Job = require("../models/job");
+//const newJobSchema = require("../schemas/jobNew.json");
+//const updateJobSchema = require("../schemas/jobUpdate.json");
+//const { BadRequestError } = require("../expressError");
+//const { ensureLoggedIn } = require("../middleware/auth");
+//
+//
+//
+//const router = new express.Router();
+//
+//
+//
+//router.post("/", ensureLoggedIn, async function (req, res, next) {
+//  try {
+//    const validator = jsonschema.validate(req.body, newJobSchema);
+//    if (!validator.valid) {
+//      const errs = validator.errors.map(e => e.stack);
+//      throw new BadRequestError(errs);
+//    }
+//
+//    const job = await Job.register(req.body);
+//    return res.status(201).json({ job });
+//  } catch (err) {
+//    return next(err);
+//  }
+//});
+//
+////made job plural.....
+//router.get("/", async function (req, res, next) {
+//  try {
+//    const jobs = await Job.findAll(req.query);
+//    return res.json({ jobs });
+//  } catch (err) {
+//    return next(err);
+//  }
+//});
+//
+//router.get("/:id", async function (req, res, next) {
+//  try {
+//    const job = await Job.get(req.params.id);
+//    return res.json({ job });
+//  } catch (err) {
+//    return next(err);
+//  }
+//});
+//
+//
+//router.patch("/:id", ensureLoggedIn, async function (req, res, next) {
+//  try {
+//    const validator = jsonschema.validate(req.body, updateJobSchema);
+//    if (!validator.valid) {
+//      const errs = validator.errors.map(e => e.stack);
+//      throw new BadRequestError(errs);
+//    }
+//    //modified the route here adding username const and to update...
+//    const username = res.locals.user.username;
+//    const job = await Job.update(username, req.params.id, req.body);
+//    return res.json({ job });
+//  } catch (err) {
+//    return next(err);
+//  }
+//});
+//
+//
+//router.delete("/:id", ensureLoggedIn, async function (req, res, next) {
+//  try {
+//    await Job.remove(req.params.id);
+//    return res.json({ deleted: req.params.id });
+//  } catch (err) {
+//    return next(err);
+//  }
+//});
+//
+//
+//module.exports = router;
+//
+//
+//ROUTE AUTH.JS
+//
+//"use strict";
+//
+///** Routes for authentication. */
+//
+//const jsonschema = require("jsonschema");
+//
+//const User = require("../models/user");
+//const express = require("express");
+//const router = new express.Router();
+//const { createToken } = require("../helpers/tokens");
+//const userAuthSchema = require("../schemas/userAuth.json");
+//const userRegisterSchema = require("../schemas/userRegister.json");
+//const { BadRequestError } = require("../expressError");
+//
+///** POST /auth/token:  { username, password } => { token } Returns JWT token which can be used to authenticate 
+// * further requests. Authorization required: none */
+//
+//router.post("/token", async function (req, res, next) {
+//  try {
+//    const validator = jsonschema.validate(req.body, userAuthSchema);
+//    if (!validator.valid) {
+//      const errs = validator.errors.map(e => e.stack);
+//      throw new BadRequestError(errs);
+//    }
+//
+//    const { username, password } = req.body;
+//    const user = await User.authenticate(username, password);
+//    const token = createToken(user);
+//
+//    return res.json({ token });
+//  } catch (err) {
+//    return next(err);
+//  }
+//});
+//
+//
+///** POST /auth/register:   { user } => { token } user must include { username, password, firstName, lastName, email } 
+// * Returns JWT token which can be used to authenticate further requests. Authorization required: none*/
+//
+//router.post("/register", async function (req, res, next) {
+//  try {
+//    const validator = jsonschema.validate(req.body, userRegisterSchema);
+//    if (!validator.valid) {
+//      const errs = validator.errors.map(e => e.stack);
+//      throw new BadRequestError(errs);
+//    }
+//
+//    const newUser = await User.register({ ...req.body, isAdmin: false });
+//    const token = createToken(newUser);
+//    return res.status(201).json({ token });
+//  } catch (err) {
+//    return next(err);
+//  }
+//});
+//
+//
+//module.exports = router;
+//
+//ROUTE AUTH.JS
+//
+//"use strict";
+//
+///** Routes for authentication. */
+//
+//const jsonschema = require("jsonschema");
+//
+//const User = require("../models/user");
+//const express = require("express");
+//const router = new express.Router();
+//const { createToken } = require("../helpers/tokens");
+//const userAuthSchema = require("../schemas/userAuth.json");
+//const userRegisterSchema = require("../schemas/userRegister.json");
+//const { BadRequestError } = require("../expressError");
+//
+///** POST /auth/token:  { username, password } => { token }
+// *
+// * Returns JWT token which can be used to authenticate further requests.
+// *
+// * Authorization required: none
+// */
+//
+//router.post("/token", async function (req, res, next) {
+//  try {
+//    const validator = jsonschema.validate(req.body, userAuthSchema);
+//    if (!validator.valid) {
+//      const errs = validator.errors.map(e => e.stack);
+//      throw new BadRequestError(errs);
+//    }
+//
+//    const { username, password } = req.body;
+//    const user = await User.authenticate(username, password);
+//    const token = createToken(user);
+//    return res.json({ token });
+//  } catch (err) {
+//    return next(err);
+//  }
+//});
+//
+//
+///** POST /auth/register:   { user } => { token }
+// *
+// * user must include { username, password, firstName, lastName, email }
+// *
+// * Returns JWT token which can be used to authenticate further requests.
+// *
+// * Authorization required: none
+// */
+//
+//router.post("/register", async function (req, res, next) {
+//  try {
+//    const validator = jsonschema.validate(req.body, userRegisterSchema);
+//    if (!validator.valid) {
+//      const errs = validator.errors.map(e => e.stack);
+//      throw new BadRequestError(errs);
+//    }
+//
+//    const newUser = await User.register({ ...req.body, isAdmin: false });
+//    const token = createToken(newUser);
+//    return res.status(201).json({ token });
+//  } catch (err) {
+//    return next(err);
+//  }
+//});
+//
+//
+//module.exports = router;
+//
